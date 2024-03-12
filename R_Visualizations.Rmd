@@ -1,0 +1,307 @@
+---
+title: "Air Visualizations in R"
+author: "Brandyn Ruiz"
+date: "2024-03-13"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    toc_depth: 3
+    theme: lumen
+---
+
+```{r, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(NatParksPalettes)
+library(openair)
+library(cowplot)
+```
+
+# CASPER Series: WCWLB
+
+```{r WCWLB Data Read, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+# Set working directory to point to the downloaded subfolder
+
+# ?setwd()
+
+WCWLB <- read_csv("wcwlb.csv")
+
+WCWLB %>% 
+  head(5)
+```
+
+```{r EPA 710 Data Read, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+EPA_710_DailySource <- read_csv("EPA_710_DailySource.csv")
+
+EPA_710_DailySource %>% 
+  head(5)
+```
+
+### Calendar Plots
+
+```{r WCWLB 2021 Calendar Plot, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+calendar_2021_WCWLB <- WCWLB %>% 
+  select(Timestamp, Value) %>% 
+  rename("date" = 1, "pm25" = 2) %>% 
+  timeAverage(avg.time = "day") %>%
+  calendarPlot(pollutant = "pm25",
+               year = 2021,
+               data.thresh = 5,
+               w.shift = 1,
+               main = "PM 2.5 Daily Averages in 2021, WCWLB",
+               limits = c(0, 60),
+               key.header = expression(paste("PM2.5 ", group("[", mu*g/{m^3}, "]"))))
+
+```
+
+```{r WCWLB 2022 Calendar Plot, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+calendar_2022_WCWLB <- WCWLB %>% 
+  select(Timestamp, Value) %>% 
+  rename("date" = 1, "pm25" = 2) %>% 
+  timeAverage(avg.time = "day") %>%
+  calendarPlot(pollutant = "pm25",
+               year = 2022,
+               data.thresh = 5,
+               w.shift = 1,
+               main = "PM 2.5 Daily Averages in 2022, WCWLB",
+               limits = c(0, 60),
+               key.header = expression(paste("PM2.5 ", group("[", mu*g/{m^3}, "]"))))
+
+```
+
+### Comparison Bar Chart Plots
+
+```{r WCWLB Days Above 12, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+# Number of days above 12 PM2.5 across all monitors
+
+WCWLB_dailyAvg <- WCWLB %>%
+  select(Monitor_Name, Timestamp, Value) %>%
+  filter(Timestamp < "2023-01-01") %>%
+  rename("date" = Timestamp, "pm25" = Value) %>%
+  timeAverage(avg.time = "day") %>%
+  ungroup() %>% 
+  mutate(Year = year(date),
+         Over12 = ifelse(pm25 > 12, 1, 0))
+
+# Number of days over 12 plot
+WCWLB_dailyAvg_plot <- WCWLB_dailyAvg %>% 
+    group_by(Year) %>% 
+    count(Over12) %>% 
+    filter(Over12 == 1) %>% 
+    ungroup() %>% 
+    ggplot(aes(x = factor(Year), y = n, fill = factor(Year), group = factor(Year)))+
+    geom_bar(stat = 'identity', alpha = 0.7)+
+    geom_text(aes(group = factor(Year), label = n), vjust = 1.3, size = 5)+
+    scale_fill_manual(values = natparks.pals("BryceCanyon", 2))+
+    labs(subtitle = "Number of Days over 12 (µg/m3)", title = "WCWLB", x = "Year", y = "# of Days")+
+    theme_bw(base_size = 14)+
+    theme(plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5),
+          legend.position = "none")
+
+
+WCWLB_dailyAvg_plot
+
+```
+
+### Time Series Comparison
+
+```{r WCWLB Time Series, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+WCWLB_AQMD <- WCWLB %>%
+  select(Timestamp, Value) %>% 
+  rename(date = 1, pm25 = 2) %>% 
+  timeAverage(avg.time = "day") %>% 
+  ungroup() %>% 
+  mutate(type = "PurpleAir") %>% 
+  rbind(EPA_710_DailySource %>%
+          select(-siteName) %>% 
+          filter(date > "2020-12-31") %>% 
+          mutate(type = "AQMD"))
+
+time_all_2021 <- ggplot(WCWLB_AQMD %>% 
+                     mutate(date = as.Date(date)) %>% 
+                     filter(date < "2022-01-01"), aes(x = date, y = pm25)) + 
+  geom_line(aes(color = type)) + 
+  scale_color_manual(name = "", labels = c("710 fwy regulatory monitor (SC-AQMD)", "WCWLB PurpleAir sensors"),
+                     values = c("black", "mediumpurple")) + 
+  geom_hline(aes(yintercept = 12, linetype="Annual air quality standard (12 µg/m3)")) +
+  geom_hline(aes(yintercept = 35, linetype = "Daily air quality standard (35 µg/m3)")) +
+  scale_linetype_manual(name = "", values = c("dotted", "dashed")) +
+  scale_y_continuous(breaks = sort(c(seq(0, 60, by = 20), 12, 35)), limits = c(0,60)) +
+  scale_x_date(limits = as.Date(c("2021-01-01", "2021-12-31")), date_labels = "%b-%d") +
+  # ggtitle("Daily averages of PM 2.5 WCWLB", subtitle="All sensors") +
+  xlab("") + ylab("PM2.5 (µg/m3)") +
+  theme(legend.position = c(0.3, 0.75),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        axis.text.x = element_text(size=14),
+        axis.text.y = element_text(size=14),
+        axis.title.x = element_text(size=14, face = "bold"),
+        axis.title.y = element_text(size=14, face = "bold"),
+        plot.title = element_text(size=16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size=14, hjust = 0.5))
+
+time_all_2022 <- ggplot(WCWLB_AQMD %>% 
+                     mutate(date = as.Date(date)) %>% 
+                     filter(date > "2021-12-31"), aes(x = date, y = pm25)) + 
+  geom_line(aes(color = type)) + 
+  scale_color_manual(name = "", labels = c("710 fwy regulatory monitor (SC-AQMD)", "WCWLB PurpleAir sensors"),
+                     values = c("black", "mediumpurple")) + 
+  geom_hline(aes(yintercept = 12, linetype="Annual air quality standard")) +
+  geom_hline(aes(yintercept = 35, linetype="Daily air quality standard")) +
+  scale_linetype_manual(name = "", values = c("dotted", "dashed")) +
+  scale_y_continuous(breaks = sort(c(seq(0, 60, by = 20), 12, 35)), limits = c(0,60)) +
+  scale_x_date(date_labels = "%b-%d") + #, limits = as.Date(c("2021-01-01", "2021-12-31")
+  # ggtitle("Daily averages of PM 2.5 WCWLB", subtitle="All sensors") +
+  xlab("Date") + ylab("PM2.5 (µg/m3)") +
+  theme(legend.position = "none",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        axis.text.x = element_text(size=14),
+        axis.text.y = element_text(size=14),
+        axis.title.x = element_text(size=14, face = "bold"),
+        axis.title.y = element_text(size=14, face = "bold"),
+        plot.title = element_text(size=16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size=14, hjust = 0.5))
+
+title <- ggdraw() + draw_label("Daily Average PM2.5 levels, 2021-2022", fontface='bold')
+
+cowplot <- plot_grid(time_all_2021 +
+              annotate("text", x = as.Date("2021-12-15"), y = 58, label = "2021", size = 7),
+          time_all_2022 +
+              annotate("text", x = as.Date("2022-12-15"), y = 58, label = "2022", size = 7),
+          nrow = 2)
+
+cowplot_1 <- plot_grid(title, cowplot, ncol=1, rel_heights=c(0.1, 1))
+
+# cowplot_1
+
+```
+
+```{r cowplot_1, echo=FALSE, out.width = '100%'}
+knitr::include_graphics("C:/Users/bcruiz/OneDrive - University of Southern California/PB/PurpleAir/CASPER_series/FiguresCasper/WCWLB/WCWLB_AQMD_all.jpeg")
+```
+
+### Monthly Average Bar Charts
+
+```{r WCWLB Monthly Average, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+WCWLB_monthly <- WCWLB_dailyAvg %>% 
+    filter(Year < 2023) %>%
+    select(-c(Year, Over12)) %>% 
+    mutate(Month = month(date), Year = year(date)) %>% 
+    timeAverage(avg.time = "month") %>% #, type = c("Monitor_Name")
+    arrange(date) %>% 
+  mutate(Month_abbv = format(date, "%b"))
+
+WCWLB_monthly_plot <- WCWLB_monthly %>% 
+    ggplot(aes(x = factor(Month), y = pm25, fill = factor(Year), group = factor(Year)))+
+    geom_bar(stat = "identity", position = "dodge", alpha = 0.8)+
+    geom_hline(aes(yintercept = 12, linetype = "Annual Air Quality Standard\n (12 µg/m3)"), color = "red", size = 1.09)+
+    geom_text(aes(group = factor(Year), label = round(pm25, 1)), position = position_dodge(width = 0.9),
+              vjust = 1.1, size = 5)+
+    scale_x_discrete(labels = c(unique(WCWLB_monthly$Month_abbv)))+
+    scale_fill_manual(values = natparks.pals("BryceCanyon", 2))+
+    scale_linetype_manual(name = "", values = c("dashed"))+
+    labs(x = "Month", y = "Average PM2.5 (µg/m3)", title = "WCWLB PM2.5 Monthly Averages", fill = "Year")+
+    theme_bw(base_size = 14)+
+    theme(plot.title = element_text(hjust = 0.5))
+
+# WCWLB_monthly_plot
+
+```
+
+```{r WCWLB_monthly_plot, echo=FALSE, out.width = '100%'}
+knitr::include_graphics("C:/Users/bcruiz/OneDrive - University of Southern California/PB/PurpleAir/CASPER_series/FiguresCasper/WCWLB/WCWLB_monthly_plot.jpeg")
+```
+
+### Hourly Averages by Season
+
+```{r WCWLB Seasonal Hourly Averages, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+WCWLB_Hourly <- WCWLB %>% 
+    mutate(Hour = hour(Timestamp),
+           Season = ifelse(month(Timestamp) > 5 & month(Timestamp) < 9, "Summer",
+                           ifelse(month(Timestamp) > 10 | month(Timestamp) == 1, "Winter", NA))) %>% 
+    filter(!is.na(Season)) %>% 
+    rename("date" = "Timestamp", "pm25" = "Value") %>% 
+    timeAverage(avg.time = "hour", type = c("Season")) %>% 
+    group_by(Season, Hour) %>% 
+    summarize(Avg = mean(pm25))
+
+WCWLB_Hourly_plot <- WCWLB_Hourly %>% 
+    ggplot(aes(x = factor(Hour), y = Avg, color = Season, group = Season))+
+    geom_line(size = 2)+
+    labs(x = "Hour", y = "Average PM2.5 (µg/m3)", title = "Hourly PM2.5 Averages by Season")+
+    scale_color_manual(values = natparks.pals("BryceCanyon", 2))+
+    theme_bw(base_size = 14)+
+    theme(plot.title = element_text(hjust = 0.5))
+
+WCWLB_Hourly_plot
+
+```
+
+# Rule 1180 - Hydrogen Sulfide
+
+```{r 1180 Data Read, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+
+Chico213th_H2SWind <- read_csv("Chico213th_H2SWind.csv")
+
+Chico213th_H2SWind %>% 
+  head(5)
+```
+
+
+## 213th & Chico
+
+### Wind Rose Plot
+
+```{r Chico&213th Wind Rose, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+
+windRose(Chico213th_H2SWind, key.header = "'Chico213th' Wind\n 10/22/21 - 1/28/22")
+```
+
+### Pollution Rose
+
+```{r Chico&213th Pollution Rose, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+pollutionRose(Chico213th_H2SWind, pollutant = 'H2S',
+              key.header = "'Chico213th' Pollution Time Series\n 10/22/21 - 1/28/22",
+              key.footer = "H2S (ppb)")
+```
+
+### Polar Plot
+
+```{r Chico&213th Polar Plot, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+polarPlot(Chico213th_H2SWind, pollutant = 'H2S',
+          key.header = "'Chico213th' H2S \n Avg Pollution Concentration\n 10/22/21 - 1/28/22",
+          key.footer = "H2S (ppb)")
+
+```
+
+### Wind Rose By Month
+
+```{r Wind Rose by Month, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+
+windRose(Chico213th_H2SWind, type = "Month", key.header = "'Chico213th' Wind\n 10/22/21 - 1/28/22")
+```
+
+### Pollution Rose by Month
+
+```{r Pollution Rose by Month, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+pollutionRose(Chico213th_H2SWind, pollutant = 'H2S',
+              type = "Month",
+              key.header = "'Chico213th' Pollution Time Series\n 10/22/21 - 1/28/22",
+              key.footer = "H2S (ppb)",
+              key.position = "bottom")
+```
+
+### Polar Plot by Month
+
+```{r Polar Plot by Month, include=TRUE, message=FALSE, error=FALSE, warning=FALSE}
+polarPlot(Chico213th_H2SWind, pollutant = 'H2S',
+          type = "Month",
+          key.header = "'Chico213th' H2S \n Avg Pollution Concentration\n 10/22/21 - 1/28/22",
+          key.footer = "H2S (ppb)",
+          key.position = "bottom")
+
+```
